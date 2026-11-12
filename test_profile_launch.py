@@ -12,7 +12,7 @@ import profile_branding
 class ProfileLaunchTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
-        self.root = Path(self.temp.name)
+        self.root = Path(self.temp.name).resolve()
         self.previous = engine.current_app()
         self.project_patch = mock.patch.object(engine, "PROJECT_DIR", self.root)
         self.project_patch.start()
