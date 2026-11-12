@@ -57,9 +57,21 @@ def main():
                 def __init__(self):
                     self.calls = []
                     self.edits = {}
+                    self.created = False
 
                 def snapshot(self, key):
-                    return Snapshot(key, tuple(Account(name,True,(),*self.edits.get(name,(None,None))) for name in (None,"account-2")))
+                    names = (None,"account-2","account-3") if self.created else (None,"account-2")
+                    return Snapshot(key, tuple(Account(name,True,(),*self.edits.get(name,(None,None))) for name in names))
+
+                def create_codex_account(self, label, description):
+                    self.created = True
+                    self.edits["account-3"] = (label, description)
+                    self.calls.append(("codex", "account-3", "create"))
+                    return "account-3", "请在官方 Codex 窗口完成登录。"
+
+                def login_codex_profile(self, name):
+                    self.calls.append(("codex", name, "login"))
+                    return "请在官方 Codex 窗口完成登录。"
 
                 def perform(self, app, name, action):
                     self.calls.append((app, name, action))
@@ -119,6 +131,18 @@ def main():
                 pump(lambda:window.accounts["main"].label=="工作账号")
                 assert window.accounts["main"].detail=="项目与开发"
                 report["editable_name_description"] = True
+                if args.app == "codex":
+                    window.create_account()
+                    window.create_name.set("测试账号")
+                    window.create_description.set("独立登录")
+                    window.submit_create_account()
+                    pump(lambda: window.create_dialog is None and not window.busy)
+                    pump(lambda: "profile:account-3" in window.accounts)
+                    assert window.selected_key == "profile:account-3"
+                    window.act("login")
+                    pump(lambda: not window.busy)
+                    assert service.calls[-2:] == [("codex", "account-3", "create"), ("codex", "account-3", "login")]
+                    report["create_and_login_routing"] = True
                 window.selected_key="profile:account-2"
                 window.render(Snapshot(args.app, (Account(None, True), Account("account-2", False))))
                 assert any(r[-1] == "open" for r in window.regions)

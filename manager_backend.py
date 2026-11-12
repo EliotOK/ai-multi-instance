@@ -6,6 +6,7 @@ from dataclasses import dataclass
 
 import engine
 from account_display import DisplayStore
+from account_display import validate_display
 
 
 @dataclass(frozen=True)
@@ -76,6 +77,57 @@ class ManagerService:
                 raise ValueError("账号目录不存在，请刷新列表")
             values=self.display_store.save(app_key,"main" if name is None else "profile:"+name,label,description)
             return values
+
+    def create_codex_account(self, label, description):
+        """Create and launch a fresh Codex-only profile without touching main."""
+        label, description = validate_display(label, description)
+        with self.lock:
+            app = self._select("codex")
+            # Check installation before making any persistent account state.
+            exe = engine.find_app_exe(refresh=True, app=app)
+            if exe is None:
+                raise RuntimeError("Codex 未安装，或无法找到桌面应用。请先安装 Codex 后重试。")
+            # Detect malformed/unreadable presentation data before reserving a
+            # new immutable profile directory.
+            self.display_store.read()
+            profiles = engine.PROFILES_DIR
+            profiles.mkdir(parents=True, exist_ok=True)
+            index = 2
+            while True:
+                name = f"account-{index}"
+                if not engine.valid_profile_name(name):
+                    raise RuntimeError("无法分配新的 Codex 账号目录")
+                path = profiles / name
+                try:
+                    path.mkdir(exist_ok=False)
+                    break
+                except FileExistsError:
+                    index += 1
+            try:
+                self.display_store.save("codex", "profile:" + name, label, description)
+            except Exception as exc:
+                return name, f"账号目录已创建，但名称和描述未保存：{exc}。请刷新后重试。"
+            try:
+                engine.launch_profile(name, exe=exe)
+            except Exception as exc:
+                # Keep the empty/profile data directory: a later login action
+                # can retry, and we must never remove user data automatically.
+                return name, "账号已创建，启动失败；选择它后点击“登录账号”重试。"
+            return name, "已打开 Codex。请在官方客户端中完成浏览器登录。"
+
+    def login_codex_profile(self, name):
+        """Open a selected Codex profile in the official desktop client."""
+        with self.lock:
+            app = self._select("codex")
+            if name in (None, "", ".", "..") or not engine.valid_profile_name(name):
+                raise ValueError("请选择一个 Codex 独立账号")
+            if name not in {p.name for p in engine.list_profiles()}:
+                raise ValueError("账号目录不存在，请刷新列表")
+            exe = engine.find_app_exe(refresh=True, app=app)
+            if exe is None:
+                raise RuntimeError("Codex 未安装，或无法找到桌面应用")
+            engine.launch_profile(name, exe=exe)
+            return "已打开 Codex。请在官方客户端中完成浏览器登录；启动不代表已登录。"
 
     def maintain_appearance(self, snapshot):
         if snapshot.app_key != "codex" or snapshot.error:

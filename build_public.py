@@ -27,25 +27,16 @@ def main():
     env["PYTHONNOUSERSITE"] = "1"
     env["PYINSTALLER_CONFIG_DIR"] = str(work / "cache")
 
-    for name, entry, windowed in (
-        ("ai-multi-instance", "main.py", False),
-        ("launcher", "launcher.pyw", True),
-    ):
-        command = [sys.executable, "-m", "PyInstaller", "--onefile", "--noupx", "--noconfirm",
-                   "--name", name, "--distpath", str(output), "--workpath", str(work / "pyinstaller"),
-                   "--specpath", str(work), "--windowed" if windowed else "--console", str(source / entry)]
-        subprocess.run(command, check=True, cwd=source, env=env)
-
     subprocess.run([sys.executable, str(source / "build_manager.py"), "--output", str(output),
                     "--work", str(work / "hub")], check=True, cwd=source, env=env)
-    files = [output / f"{name}.exe" for name in ("ai-multi-instance", "launcher", "AI-Instance-Hub")]
+    files = [output / "AI-Instance-Hub.exe"]
     files.extend((source / "LICENSE", source / "PUBLIC-START.md"))
     if not all(path.is_file() for path in files):
         raise RuntimeError("A required release file is missing")
     checksums = {path.name: hashlib.sha256(path.read_bytes()).hexdigest() for path in files}
-    manifest = {"release": "instance-hub-1.3.0-upstream-2.0.1", "portable": True,
+    manifest = {"release": "instance-hub-1.4.0", "portable": True,
                 "bundled_account_data": False, "files": checksums}
-    package = output / "instance-hub-1.3.0-upstream-2.0.1-windows.zip"
+    package = output / "instance-hub-1.4.0-windows.zip"
     temporary = package.with_suffix(".tmp")
     with zipfile.ZipFile(temporary, "w", compression=zipfile.ZIP_DEFLATED) as archive:
         for path in files:

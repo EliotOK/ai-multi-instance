@@ -1,13 +1,14 @@
-# Claude / Codex Multi-Instance
+# Instance Hub — Codex account manager
 
 [Original project](https://github.com/Zoltak-Dev/ai-multi-instance) · [Fork quick start](PUBLIC-START.md)
 [![Support on Ko-fi](https://img.shields.io/badge/Support%20me-Ko--fi-FF5E5B?style=for-the-badge&logo=kofi&logoColor=white)](https://ko-fi.com/zoltrak)
 
 Run multiple accounts of the [Claude desktop app](https://claude.ai/download) **and** the [Codex desktop app](https://chatgpt.com/codex) on Windows. The official clients only support one account at a time. This tool launches each app with a dedicated profile directory per account, allowing several accounts to run side by side and be switched instantly.
 
-![Claude / Codex Multi-Instance preview](https://github.com/user-attachments/assets/3c8f5415-9795-490f-a177-153f42b21f44)
-
-The interface is arrow-key driven: move the highlight with `↑`/`↓`, then press a digit for an action (`1` launch, `2` sign-in, `3` close, `4` rename, `5` shortcut, `6` delete, `7` new, `8` switch app, `9` usage, `0` quit). Because rows are picked with the arrows and never by number, a digit is always an action — no ambiguity. Press `Space` to tick several profiles and act on them at once. The list's first row is always the **main instance** (your normal Claude, launched without a profile) so you can launch or close it from here too; the running/idle state refreshes on its own. The accent colour follows the app — Claude's orange, Codex's blue.
+Download the standalone `AI-Instance-Hub.exe` from this fork's Releases. For Codex,
+click **添加账号** (Add account), give it a name, and complete sign-in in the official
+Codex window. The same GUI manages account launch, restart, close, names and descriptions.
+No companion EXE is required. Claude's console sign-in workflow remains available in source.
 
 ## Install
 
@@ -18,7 +19,7 @@ Windows 10+ and the Claude and/or Codex desktop app installed.
 **From source (recommended)** — requires Python 3.11+ for the Instance Hub additions. Download this fork's source ZIP from GitHub's **Code** menu and extract it, then open PowerShell in the extracted directory:
 
 ```powershell
-python main.py
+python manager.pyw
 ```
 
 No `pip install` — the project uses only the Python standard library.
@@ -26,15 +27,16 @@ No `pip install` — the project uses only the Python standard library.
 ### Instance Hub additions in this fork
 
 Run `pythonw manager.pyw` for a dark graphical account manager with tray and
-taskbar entries. The original `main.py` console manager remains available and
-can create new profiles; the GUI lists and manages those profiles. The GUI
+taskbar entries. The original `main.py` console manager remains available for
+Claude snapshot sign-in. For Codex, use the GUI's Add account and Sign in controls
+to create an independent profile and open the official login flow. The GUI
 supports account launch, show, restart, close, and editable display names and
 descriptions. Display settings are stored in `account-display.json`, separate
 from account login data. Codex profile `account-2` gets a blue `2` taskbar icon.
 
 Build a generic portable Windows ZIP with Python 3.11+ and
 `pip install -r requirements-build.txt`, then run `python build_public.py`.
-The ZIP includes the original console manager, profile shortcut launcher, GUI,
+The ZIP includes the standalone GUI EXE,
 MIT license, and [quick start](PUBLIC-START.md). Its EXEs do not contain a
 machine-specific account directory. A bound personal build can instead use
 `python build_manager.py --data-root "C:\path\to\your\installation"`; do not
@@ -44,13 +46,15 @@ The GUI uses privately loaded Baloo 2 and GenSen Rounded derivative fonts;
 font notices are in `assets/fonts/`. GUI styling was inspired by
 [Codex Resets](https://codex-resets.com/zh-CN); no assets from that site are used.
 
-**Pre-built binary (no Python required)** — download the fork's portable ZIP from its Releases page, unzip the three `.exe` files together, then follow [PUBLIC-START.md](PUBLIC-START.md). The [upstream Releases](https://github.com/Zoltak-Dev/ai-multi-instance/releases) contain the original two-executable package without this fork's Instance Hub.
+**Pre-built binary (no Python required)** — download the fork's portable ZIP from its Releases page, extract and run `AI-Instance-Hub.exe`, then follow [PUBLIC-START.md](PUBLIC-START.md). The [upstream Releases](https://github.com/Zoltak-Dev/ai-multi-instance/releases) contain the original two-executable package without this fork's Instance Hub.
 
 The binaries are unsigned. Windows may show a SmartScreen warning, and [Smart App Control](https://learn.microsoft.com/en-us/windows/apps/develop/smart-app-control/overview) may block unknown unsigned apps. If Windows blocks the download, use the source install above.
 
-**Updating:** replace all three executables together, or run `git pull --ff-only` for a cloned source install. Keep your `ClaudeProfiles`, `CodexProfiles`, `state.json`, `account-display.json` and `usage_cache.json` files. Do not run two copies of the manager's sign-in flow at once.
+**Updating:** replace `AI-Instance-Hub.exe`, or run `git pull --ff-only` for a cloned source install. Keep your `ClaudeProfiles`, `CodexProfiles`, `state.json`, `account-display.json` and `usage_cache.json` files. Do not run two copies of the manager's sign-in flow at once.
 
-## Usage
+## Original console interface
+
+The following section documents `python main.py`. Codex users can complete setup in the GUI described in [PUBLIC-START.md](PUBLIC-START.md).
 
 Move the highlight with `↑`/`↓` and press a digit for the action — rows are never typed by number. `Space` ticks a profile so an action (launch, close, shortcut, delete) can run on several at once. The top row, **main instance**, is your normal single-account Claude; only launch/close apply to it.
 
@@ -132,18 +136,18 @@ python -m unittest discover -v
 python diagnose_login.py --duration 0
 ```
 
-The tests use temporary data and mocked process launches; they do not close or move your real sessions. GitHub Actions runs them on Windows with Python 3.11 and 3.12 and builds the portable three-executable package.
+The tests use temporary data and mocked process launches; they do not close or move your real sessions. GitHub Actions runs them on Windows with Python 3.11 and 3.12 and builds the portable standalone package.
 
 ## Build
 
-Build the portable three-executable package for users who don't have Python:
+Build the portable standalone package for users who don't have Python:
 
 ```powershell
 python -m pip install -r requirements-build.txt
 python build_public.py
 ```
 
-The ZIP lands in `dist/public/`. Extract all three binaries into the same folder: `ai-multi-instance.exe`, `launcher.exe` and `AI-Instance-Hub.exe`. The release manifest contains SHA-256 checksums.
+The ZIP lands in `dist/public/`. Run `AI-Instance-Hub.exe`; Codex account creation, login guidance and account management are available from this one EXE. The release manifest contains SHA-256 checksums.
 
 The [upstream releases](https://github.com/Zoltak-Dev/ai-multi-instance/releases) have the original two-executable package.
 

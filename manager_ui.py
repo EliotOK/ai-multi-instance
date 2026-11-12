@@ -49,6 +49,7 @@ class HubWindow:
         self.hover_key = None
         self.card_regions = []
         self.editor = None
+        self.create_dialog = None
         self.card_height = 82
         self.card_step = 94
         self.scale = max(1, root.winfo_fpixels("1i") / 96)
@@ -168,7 +169,9 @@ class HubWindow:
         self.rounded(c,width-147,226,92,32,SKY if not unknown else ROSE,radius=16)
         self.text(c,width-101,242,status,12,BG,True,"center")
         self.text(c,32,331,"你的账号",21,TEXT,True)
-        self.text(c,width-36,332,f"{len(self.accounts):02d} 个账号",12,MUTED,anchor="e")
+        self.text(c,width-260,332,f"{len(self.accounts):02d} 个账号",12,MUTED,anchor="e")
+        self.button("create",width-240,305,204,"添加账号" if self.app_key=="codex" else "Claude 暂不可用",
+                    "secondary",not self.busy and self.app_key=="codex")
         card_height=max(86,height-480)
         self.cards.place(x=round(31*self.scale),y=round(354*self.scale),width=round((width-61)*self.scale),height=round(card_height*self.scale))
         self.draw_cards(width-64)
@@ -177,7 +180,9 @@ class HubWindow:
         self.button("open",32,height-114,194,"显示窗口" if selected and selected.running else "启动账号","primary",active)
         self.button("restart",239,height-114,120,"重启账号","secondary",active)
         self.button("close",372,height-114,120,"退出账号","danger",active and selected.running)
-        self.text(c,width-32,height-91,"关闭窗口，收进托盘" if self.shell and self.shell.added else "关闭窗口，退出启动器",12,MUTED,anchor="e")
+        login_enabled = not self.busy and self.app_key=="codex" and selected is not None and selected.name is not None
+        self.button("login",505,height-114,140,"登录账号" if self.app_key=="codex" else "Claude 登录暂不可用",
+                    "secondary",login_enabled)
         self.text(c,32,height-41,self.last_message,12,ACCENT if self.busy else MUTED,
                   width=round((width-64)*self.scale))
         hint="点击托盘图标恢复窗口 · 右键托盘退出启动器" if self.shell and self.shell.added else "关闭启动器后，账号仍继续运行"
@@ -243,6 +248,8 @@ class HubWindow:
                     self.change_app(key.split(":",1)[1])
                 elif key=="refresh":
                     self.refresh(manual=True)
+                elif key=="create":
+                    self.create_account()
                 else:
                     self.act(key)
                 return
@@ -325,6 +332,83 @@ class HubWindow:
             self.editor.destroy()
         self.editor=None
 
+    def create_account(self):
+        if self.busy or self.app_key != "codex":
+            if self.app_key == "claude":
+                self.last_message="Claude 新账号登录暂不可用。"
+                self.draw()
+            return
+        if self.create_dialog and self.create_dialog.winfo_exists():
+            self.create_dialog.lift()
+            return
+        dialog=tk.Toplevel(self.root)
+        self.create_dialog=dialog
+        dialog.title("添加 Codex 账号")
+        dialog.transient(self.root)
+        dialog.configure(bg=CARD)
+        dialog.resizable(False,False)
+        dialog.iconbitmap(str(ICON))
+        pad=round(24*self.scale)
+        frame=tk.Frame(dialog,bg=CARD)
+        frame.pack(fill="both",expand=True,padx=pad,pady=pad)
+        tk.Label(frame,text="添加独立 Codex 账号",bg=CARD,fg=TEXT,font=self.font(22,True),anchor="w").pack(fill="x")
+        tk.Label(frame,text="将创建新的本机资料目录，不会读取或复制主账号登录信息。",
+                 bg=CARD,fg=MUTED,font=self.font(12),anchor="w",wraplength=430).pack(fill="x",pady=(4,8))
+        tk.Label(frame,text="首次启动后，请在 Codex 官方窗口中登录；浏览器登录会返回该窗口。",
+                 bg=CARD,fg=MUTED,font=self.font(12),anchor="w",wraplength=430).pack(fill="x",pady=(0,8))
+        self.create_name=tk.StringVar()
+        self.create_description=tk.StringVar()
+        self.create_status=tk.StringVar()
+        for title,variable in (("名称",self.create_name),("描述（可选）",self.create_description)):
+            tk.Label(frame,text=title,bg=CARD,fg=MUTED,font=self.font(12),anchor="w").pack(fill="x",pady=(8,5))
+            entry=tk.Entry(frame,textvariable=variable,width=36,font=self.font(15),bg=BG,fg=TEXT,
+                           insertbackground=TEXT,relief="flat",highlightthickness=1,highlightbackground="#7D705C",highlightcolor=ACCENT)
+            entry.pack(fill="x",ipady=round(8*self.scale))
+            if title=="名称":
+                self.create_name_entry=entry
+        tk.Label(frame,textvariable=self.create_status,bg=CARD,fg=ROSE,font=self.font(12),anchor="w",wraplength=430).pack(fill="x",pady=(10,8))
+        buttons=tk.Frame(frame,bg=CARD)
+        buttons.pack(fill="x")
+        self.create_cancel=tk.Button(buttons,text="取消",command=self.close_create_dialog,bg=CARD,fg=TEXT,activebackground=BG,
+                                     activeforeground=TEXT,relief="flat",font=self.font(14,True),padx=22,pady=6)
+        self.create_cancel.pack(side="right")
+        self.create_submit=tk.Button(buttons,text="创建并打开",command=self.submit_create_account,bg=ACCENT,fg=BG,
+                                     activebackground="#E4B844",activeforeground=BG,relief="flat",
+                                     font=self.font(14,True),padx=22,pady=6)
+        self.create_submit.pack(side="right",padx=(0,10))
+        dialog.protocol("WM_DELETE_WINDOW",lambda:self.close_create_dialog())
+        dialog.bind("<Escape>",lambda event:self.close_create_dialog())
+        dialog.bind("<Return>",lambda event:self.submit_create_account())
+        dialog.update_idletasks()
+        x=self.root.winfo_rootx()+max(0,(self.root.winfo_width()-dialog.winfo_width())//2)
+        y=self.root.winfo_rooty()+max(0,(self.root.winfo_height()-dialog.winfo_height())//2)
+        dialog.geometry(f"+{x}+{y}")
+        dialog.grab_set()
+        self.create_name_entry.focus_set()
+
+    def close_create_dialog(self,force=False):
+        if self.busy and not force:
+            return
+        if self.create_dialog and self.create_dialog.winfo_exists():
+            self.create_dialog.grab_release()
+            self.create_dialog.destroy()
+        self.create_dialog=None
+
+    def submit_create_account(self):
+        if self.busy or not self.create_dialog:
+            return
+        try:
+            values=validate_display(self.create_name.get(),self.create_description.get())
+        except ValueError as exc:
+            self.create_status.set(str(exc))
+            return
+        self.busy=True
+        self.create_status.set("正在创建独立账号并打开 Codex…")
+        self.create_submit.configure(state="disabled")
+        self.create_cancel.configure(state="disabled")
+        self.draw()
+        self.requests.put(("create","codex",None,values))
+
     def save_editor(self):
         if self.busy or not self.editor:
             return
@@ -386,7 +470,17 @@ class HubWindow:
 
     def act(self,action):
         account=self.selected()
-        if self.busy or account is None or account.running is None:
+        if self.busy or account is None:
+            return
+        if action == "login":
+            if self.app_key != "codex" or account.name is None:
+                return
+            self.busy=True
+            self.last_message=f"正在打开{account.label}的 Codex 官方客户端…"
+            self.draw()
+            self.requests.put(("login","codex",account.name,None))
+            return
+        if account.running is None:
             return
         if action=="close" and not account.running:
             return
@@ -411,6 +505,10 @@ class HubWindow:
                         service.maintain_appearance(result)
                 elif kind=="edit":
                     result=service.save_display(app,name,*action)
+                elif kind=="create":
+                    result=service.create_codex_account(*action)
+                elif kind=="login":
+                    result=service.login_codex_profile(name)
                 else:
                     result=service.perform(app,name,action)
                 responses.put((kind,app,result,None))
@@ -446,6 +544,21 @@ class HubWindow:
                     self.draw()
                 else:
                     self.render(result)
+            elif kind=="create":
+                self.busy=False
+                if error:
+                    self.last_message="账号未创建"
+                    if self.create_dialog:
+                        self.create_status.set(error)
+                        self.create_submit.configure(state="normal")
+                        self.create_cancel.configure(state="normal")
+                else:
+                    name,message=result
+                    self.selected_key="profile:"+name
+                    self.close_create_dialog(force=True)
+                    self.last_message=message
+                self.draw()
+                self.refresh()
             else:
                 self.busy=False
                 if kind=="edit":
@@ -477,6 +590,7 @@ class HubWindow:
 
     def hide(self):
         self.close_editor()
+        self.close_create_dialog()
         if self.shell and self.shell.added:
             self.root.withdraw()
             self.diagnostics()
@@ -516,6 +630,8 @@ class HubWindow:
                 except tk.TclError:
                     pass
         self.requests.put(None)
+        self.close_editor()
+        self.close_create_dialog()
         if self.shell:
             self.shell.close()
         self.root.destroy()

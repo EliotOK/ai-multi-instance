@@ -15,9 +15,10 @@ class FakeService:
     def __init__(self):
         self.calls=[]
         self.edits={}
+        self.names=[None,"account-2"]
 
     def snapshot(self, app):
-        return Snapshot(app,tuple(Account(name,True,(),*self.edits.get(name,(None,None))) for name in (None,"account-2")))
+        return Snapshot(app,tuple(Account(name,True,(),*self.edits.get(name,(None,None))) for name in self.names))
 
     def save_display(self,app,name,label,description):
         self.edits[name]=(label,description)
@@ -26,6 +27,16 @@ class FakeService:
     def perform(self, app, name, action):
         self.calls.append((app,name,action))
         return "操作完成"
+
+    def create_codex_account(self,label,description):
+        name=f"account-{len(self.names)+1}"
+        self.names.append(name)
+        self.edits[name]=(label,description)
+        return name,"已打开 Codex。请在官方客户端中完成浏览器登录。"
+
+    def login_codex_profile(self,name):
+        self.calls.append(("codex",name,"login"))
+        return "已打开 Codex。请在官方客户端中完成浏览器登录。"
 
 
 class ManagerUiTests(unittest.TestCase):
@@ -97,6 +108,28 @@ class ManagerUiTests(unittest.TestCase):
         controls=[r for r in self.window.regions if r[-1] in {"open","close","restart"}]
         self.assertEqual(len(controls),3)
         self.assertTrue(all(r[3]<height-67 for r in controls))
+
+    def test_onboarding_buttons_do_not_overlap_account_cards_or_footer(self):
+        self.root.update()
+        self.window.draw()
+        regions={r[-1]:r for r in self.window.regions}
+        self.assertLess(regions["create"][3],354)
+        self.assertLess(regions["login"][3],self.window.canvas.winfo_height()/self.window.scale-67)
+
+    def test_create_and_login_actions_route_to_codex_service(self):
+        self.root.deiconify()
+        self.root.update()
+        self.window.create_account()
+        self.window.create_name.set("新的工作账号")
+        self.window.create_description.set("项目")
+        self.window.submit_create_account()
+        self.pump(lambda:not self.window.busy and self.window.create_dialog is None)
+        self.pump(lambda:self.window.selected_key=="profile:account-3" and
+                  "profile:account-3" in self.window.accounts)
+        self.assertEqual(self.window.accounts["profile:account-3"].label,"新的工作账号")
+        self.window.act("login")
+        self.pump(lambda:self.service.calls and self.service.calls[-1][2]=="login")
+        self.assertEqual(self.service.calls[-1],("codex","account-3","login"))
 
     def test_shutdown_removes_only_this_tests_tray_icon(self):
         native=self.window.shell
