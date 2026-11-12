@@ -1,6 +1,6 @@
 # Claude / Codex Multi-Instance
 
-[![Download](https://img.shields.io/badge/Download-Windows%20ZIP-28A745?style=for-the-badge&logo=windows11&logoColor=white)](https://github.com/Zoltak-Dev/ai-multi-instance/releases/latest/download/ai-multi-instance-v2.0.1-windows.zip)
+[Original project](https://github.com/Zoltak-Dev/ai-multi-instance) · [Fork quick start](PUBLIC-START.md)
 [![Support on Ko-fi](https://img.shields.io/badge/Support%20me-Ko--fi-FF5E5B?style=for-the-badge&logo=kofi&logoColor=white)](https://ko-fi.com/zoltrak)
 
 Run multiple accounts of the [Claude desktop app](https://claude.ai/download) **and** the [Codex desktop app](https://chatgpt.com/codex) on Windows. The official clients only support one account at a time. This tool launches each app with a dedicated profile directory per account, allowing several accounts to run side by side and be switched instantly.
@@ -15,21 +15,40 @@ Windows 10+ and the Claude and/or Codex desktop app installed.
 
 **Compatibility checked on 30 October 2026:** Claude Desktop `3.1623.1.0`, Codex `26.1027.3384.0`, Windows 11 build `26200`. Two temporary profiles of each app were launched side by side. Snapshot adoption, cancellation and recovery are covered by automated tests using temporary directories; a complete browser sign-in still needs to be checked with your account.
 
-**From source (recommended)** — requires Python 3.9+:
+**From source (recommended)** — requires Python 3.11+ for the Instance Hub additions. Download this fork's source ZIP from GitHub's **Code** menu and extract it, then open PowerShell in the extracted directory:
 
 ```powershell
-git clone https://github.com/Zoltak-Dev/ai-multi-instance.git
-cd ai-multi-instance
 python main.py
 ```
 
 No `pip install` — the project uses only the Python standard library.
 
-**Pre-built binary (no Python required)** — download `ai-multi-instance-vX.Y.Z-windows.zip` from [Releases](https://github.com/Zoltak-Dev/ai-multi-instance/releases), unzip both `.exe` files in the same folder, and run `ai-multi-instance.exe`.
+### Instance Hub additions in this fork
+
+Run `pythonw manager.pyw` for a dark graphical account manager with tray and
+taskbar entries. The original `main.py` console manager remains available and
+can create new profiles; the GUI lists and manages those profiles. The GUI
+supports account launch, show, restart, close, and editable display names and
+descriptions. Display settings are stored in `account-display.json`, separate
+from account login data. Codex profile `account-2` gets a blue `2` taskbar icon.
+
+Build a generic portable Windows ZIP with Python 3.11+ and
+`pip install -r requirements-build.txt`, then run `python build_public.py`.
+The ZIP includes the original console manager, profile shortcut launcher, GUI,
+MIT license, and [quick start](PUBLIC-START.md). Its EXEs do not contain a
+machine-specific account directory. A bound personal build can instead use
+`python build_manager.py --data-root "C:\path\to\your\installation"`; do not
+publish that bound EXE. Build outputs and runtime account files are ignored by Git.
+
+The GUI uses privately loaded Baloo 2 and GenSen Rounded derivative fonts;
+font notices are in `assets/fonts/`. GUI styling was inspired by
+[Codex Resets](https://codex-resets.com/zh-CN); no assets from that site are used.
+
+**Pre-built binary (no Python required)** — download the fork's portable ZIP from its Releases page, unzip the three `.exe` files together, then follow [PUBLIC-START.md](PUBLIC-START.md). The [upstream Releases](https://github.com/Zoltak-Dev/ai-multi-instance/releases) contain the original two-executable package without this fork's Instance Hub.
 
 The binaries are unsigned. Windows may show a SmartScreen warning, and [Smart App Control](https://learn.microsoft.com/en-us/windows/apps/develop/smart-app-control/overview) may block unknown unsigned apps. If Windows blocks the download, use the source install above.
 
-**Updating:** replace the two executables together, or run `git pull --ff-only` for a source install. Keep your `ClaudeProfiles`, `CodexProfiles`, `state.json` and `usage_cache.json` files. Do not run two copies of the manager's sign-in flow at once.
+**Updating:** replace all three executables together, or run `git pull --ff-only` for a cloned source install. Keep your `ClaudeProfiles`, `CodexProfiles`, `state.json`, `account-display.json` and `usage_cache.json` files. Do not run two copies of the manager's sign-in flow at once.
 
 ## Usage
 
@@ -113,21 +132,20 @@ python -m unittest discover -v
 python diagnose_login.py --duration 0
 ```
 
-The tests use temporary data and mocked process launches; they do not close or move your real sessions. GitHub Actions runs them on Windows with Python 3.9 and 3.14 and builds both executables.
+The tests use temporary data and mocked process launches; they do not close or move your real sessions. GitHub Actions runs them on Windows with Python 3.11 and 3.12 and builds the portable three-executable package.
 
 ## Build
 
-Standalone `.exe` build via PyInstaller, for shipping to users who don't have Python:
+Build the portable three-executable package for users who don't have Python:
 
 ```powershell
-python -m pip install pyinstaller==6.20.0
-python -m PyInstaller --onefile --console --name ai-multi-instance --clean --noconfirm main.py
-python -m PyInstaller --onefile --noconsole --name launcher --clean --noconfirm launcher.pyw
+python -m pip install -r requirements-build.txt
+python build_public.py
 ```
 
-The two binaries land in `dist/`. Ship them in the same folder — `ai-multi-instance.exe` looks for `launcher.exe` next to itself to manage desktop shortcuts for both Claude and Codex.
+The ZIP lands in `dist/public/`. Extract all three binaries into the same folder: `ai-multi-instance.exe`, `launcher.exe` and `AI-Instance-Hub.exe`. The release manifest contains SHA-256 checksums.
 
-Pre-built binaries are attached to each [release](https://github.com/Zoltak-Dev/ai-multi-instance/releases).
+The [upstream releases](https://github.com/Zoltak-Dev/ai-multi-instance/releases) have the original two-executable package.
 
 ## Star History
 

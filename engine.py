@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import errno
 import json
+import ntpath
 import os
 import re
 import shutil
@@ -15,8 +16,11 @@ import stat
 import subprocess
 import sys
 import time
+import tomllib
 from dataclasses import dataclass
 from pathlib import Path
+
+from app_paths import data_root
 
 
 @dataclass(frozen=True)
@@ -83,10 +87,8 @@ _exe_cache: dict[str, Path | None] = {}
 
 
 def _app_dir() -> Path:
-    """Directory holding state files. Frozen exe: next to .exe. Source: next to engine.py."""
-    if getattr(sys, "frozen", False):
-        return Path(sys.executable).resolve().parent
-    return Path(__file__).resolve().parent
+    """Persistent account root, kept separate from bundled resources."""
+    return data_root()
 
 
 PROJECT_DIR = _app_dir()
@@ -273,7 +275,7 @@ def rename_profile(old: str, new: str) -> None:
 
 
 # --- Running processes ---------------------------------------------------- #
-def _processes(exe_name: str) -> list[tuple[int, str, str]]:
+def _processes(exe_name: str, *, strict: bool = False) -> list[tuple[int, str, str]]:
     """Return (pid, executable path, command line) for every running process
     named `exe_name`."""
     try:
@@ -283,8 +285,12 @@ def _processes(exe_name: str) -> list[tuple[int, str, str]]:
              "| ForEach-Object { \"$($_.ProcessId)|$($_.ExecutablePath)|$($_.CommandLine)\" }"],
             capture_output=True, text=True, timeout=10, creationflags=NO_WINDOW,
         )
-    except (OSError, subprocess.SubprocessError):
+    except (OSError, subprocess.SubprocessError) as exc:
+        if strict:
+            raise RuntimeError("Cannot inspect desktop processes; run the launcher outside the Codex sandbox.") from exc
         return []
+    if out.returncode != 0 and strict:
+        raise RuntimeError("Cannot inspect desktop processes; run the launcher outside the Codex sandbox.")
     procs: list[tuple[int, str, str]] = []
     for line in out.stdout.splitlines():
         pid_str, sep, rest = line.partition("|")
@@ -321,28 +327,39 @@ def _user_data_dir(command: str) -> Path | None:
     return Path(value) if value else None
 
 
-def running_profiles() -> dict[str, list[int]]:
-    """Return {profile_name: [pids]} for processes of the current app using
-    one of our --user-data-dir paths."""
+def _profiles_from_processes(processes: list[tuple[int, str, str]]) -> dict[str, list[int]]:
     result: dict[str, list[int]] = {}
-    profiles_root = str(PROFILES_DIR).lower()
-
-    for pid, _exe, cmd in _processes(_current.exe_name):
+    profiles_root = ntpath.normcase(ntpath.normpath(str(PROFILES_DIR)))
+    for pid, exe_path, cmd in processes:
+        if (exe_path and not _is_packaged_exe(exe_path, _current)) or (exe_path and "--type=" in cmd.lower()):
+            continue
         data = _user_data_dir(cmd)
         if data is None:
             continue
-        try:
-            parent = str(data.parent).lower()
-        except OSError:
+        path = ntpath.normpath(str(data))
+        if ntpath.normcase(ntpath.dirname(path)) != profiles_root:
             continue
-        if parent != profiles_root:
-            continue
-        result.setdefault(data.name, []).append(pid)
+        result.setdefault(ntpath.basename(path), []).append(pid)
     return result
 
 
-def close_profile(name: str) -> int:
-    return _kill_pids(running_profiles().get(name, []))
+def running_profiles(*, strict: bool = False) -> dict[str, list[int]]:
+    """Return {profile_name: [pids]} for processes of the current app using
+    one of our --user-data-dir paths."""
+    return _profiles_from_processes(_processes(_current.exe_name, strict=strict))
+
+
+def close_profile(name: str, *, wait: float = 0.0, strict: bool = False) -> int:
+    if name in ("", ".", "..") or not valid_profile_name(name):
+        raise ValueError(f"Invalid profile name: {name!r}")
+    killed = _kill_pids(running_profiles(strict=strict).get(name, []))
+    if wait > 0:
+        deadline = time.monotonic() + wait
+        while running_profiles(strict=strict).get(name):
+            if time.monotonic() >= deadline:
+                raise RuntimeError(f"Could not stop profile {name!r}; close it in Task Manager and retry.")
+            time.sleep(0.25)
+    return killed
 
 
 def profile_env(name: str) -> dict[str, str]:
@@ -358,23 +375,169 @@ def profile_env(name: str) -> dict[str, str]:
     return env
 
 
+def validate_launch(name: str | None = None) -> None:
+    """Check settings before stopping a working account; never rewrite config."""
+    if name is not None:
+        if name in ("", ".", "..") or not valid_profile_name(name):
+            raise ValueError("账号名称无效")
+        profile_launch_args(name)
+    if _current.key != CODEX.key:
+        return
+    cfg = (Path.home() / ".codex" if name is None else PROFILES_DIR / name / ".codex") / "config.toml"
+    if not cfg.exists():
+        return
+    try:
+        with cfg.open("rb") as stream:
+            tomllib.load(stream)
+    except (OSError, ValueError) as exc:
+        raise RuntimeError(f"配置检查未通过：{cfg}\n{exc}\n请修复后重试；正在运行的账号会保留。") from exc
+
+
+def profile_launch_args(name: str) -> list[str]:
+    """Codex background-rendering workaround, configurable per profile."""
+    if _current.key != CODEX.key:
+        return []
+    settings_path = PROFILES_DIR / name / "launch-settings.json"
+    settings = {}
+    if settings_path.exists():
+        try:
+            settings = json.loads(settings_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            raise RuntimeError(f"Cannot read launch settings: {settings_path}") from exc
+        if not isinstance(settings, dict):
+            raise RuntimeError(f"Launch settings must be a JSON object: {settings_path}")
+        for key in ("background_workaround", "disable_gpu"):
+            if key in settings and not isinstance(settings[key], bool):
+                raise RuntimeError(f"{key} must be true or false: {settings_path}")
+    args = []
+    if settings.get("background_workaround", True):
+        args.extend(("--disable-background-timer-throttling", "--disable-renderer-backgrounding",
+                     "--disable-backgrounding-occluded-windows"))
+    if settings.get("disable_gpu", False):
+        args.append("--disable-gpu")
+    return args
+
+
+def _spawn_desktop(exe: Path, args: list[str], env: dict[str, str]) -> None:
+    """A frozen launcher's private DLL path must not leak into Electron."""
+    env = dict(env)
+    for key in ("_PYI_APPLICATION_HOME_DIR", "_PYI_ARCHIVE_FILE", "_PYI_PARENT_PROCESS_LEVEL",
+                "_PYI_SPLASH_IPC", "AI_INSTANCE_HUB_DATA_DIR", "TCL_LIBRARY", "TK_LIBRARY"):
+        env.pop(key, None)
+    dll_path = None
+    kernel = None
+    if getattr(sys, "frozen", False) and os.name == "nt":
+        import ctypes
+        kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel.GetDllDirectoryW.argtypes = [ctypes.c_uint32, ctypes.c_wchar_p]
+        kernel.GetDllDirectoryW.restype = ctypes.c_uint32
+        kernel.SetDllDirectoryW.argtypes = [ctypes.c_wchar_p]
+        kernel.SetDllDirectoryW.restype = ctypes.c_int
+        buffer = ctypes.create_unicode_buffer(32768)
+        size = kernel.GetDllDirectoryW(len(buffer), buffer)
+        if size >= len(buffer):
+            raise RuntimeError("Cannot read launcher's DLL directory")
+        dll_path = buffer.value or None
+        if not kernel.SetDllDirectoryW(None):
+            raise ctypes.WinError(ctypes.get_last_error())
+    try:
+        subprocess.Popen([str(exe), *args], env=env, creationflags=DETACHED_FLAGS, close_fds=True,
+                         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    finally:
+        if kernel:
+            kernel.SetDllDirectoryW(dll_path)
+
+
 def launch_profile(name: str, exe: Path | None = None) -> None:
     exe = exe or find_app_exe()
     if exe is None:
         raise RuntimeError(f"{_current.display} not found. Is the desktop app installed?")
+    validate_launch(name)
     data_dir = _profile_path(name)
     data_dir.mkdir(parents=True, exist_ok=True)
+    args = profile_launch_args(name)
+    apply_pending_project_sync(name)
     env = profile_env(name)
     if _current is CODEX:
         cli = exe.parent / "resources" / "codex.exe"
         if cli.is_file():
             env["CODEX_CLI_PATH"] = str(cli)
-    subprocess.Popen(
-        [str(exe), f"--user-data-dir={data_dir}"],
-        env=env,
-        creationflags=DETACHED_FLAGS, close_fds=True,
-        stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-    )
+    _spawn_desktop(exe, [f"--user-data-dir={data_dir}", *args], env)
+    ensure_profile_icon(name)
+
+
+def restart_profile(name: str, exe: Path | None = None) -> None:
+    """Validate, stop only this profile, wait for its lock, then cold-launch."""
+    exe = exe or find_app_exe()
+    if exe is None:
+        raise RuntimeError(f"{_current.display} not found. Is the desktop app installed?")
+    validate_launch(name)
+    close_profile(name, wait=15, strict=True)
+    launch_profile(name, exe=exe)
+
+
+def apply_pending_project_sync(name: str) -> None:
+    """Refresh Codex's legacy project cache before the next cold launch."""
+    if _current.key != CODEX.key:
+        return
+    profile = _profile_path(name)
+    pending_path = profile / "project-sync-pending.json"
+    if not pending_path.is_file() or running_profiles().get(name):
+        return
+    state_path = profile / ".codex" / ".codex-global-state.json"
+    try:
+        pending = json.loads(pending_path.read_text(encoding="utf-8"))
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        projects = pending["projects"]
+        if not isinstance(projects, list) or not isinstance(state, dict):
+            raise ValueError("Invalid project synchronization data")
+        registry = state.setdefault("local-projects", {})
+        def root_key(roots):
+            return tuple(sorted(p.replace("/", "\\").rstrip("\\").casefold() for p in roots))
+        by_roots = {root_key(p["rootPaths"]): key for key, p in registry.items()}
+        host = "local:" + str(profile / ".codex")
+        mapping = state.setdefault("app-server-project-id-by-legacy-project-id-by-host", {}).setdefault(host, {})
+        order = state.setdefault("project-order", list(registry))
+        for project in projects:
+            if not isinstance(project["id"], str) or not isinstance(project["name"], str) or not project["rootPaths"]:
+                raise ValueError("Invalid project entry")
+            key = root_key(project["rootPaths"])
+            legacy_id = by_roots.get(key)
+            if legacy_id is None:
+                legacy_id = project["id"]
+                registry[legacy_id] = project
+                by_roots[key] = legacy_id
+            mapping[legacy_id] = project["id"]
+            if legacy_id not in order:
+                order.append(legacy_id)
+        shutil.copy2(state_path, state_path.with_name(state_path.name + ".projects-sync.bak"))
+        temporary = state_path.with_name(state_path.name + ".projects-sync.tmp")
+        temporary.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+        temporary.replace(state_path)
+        pending_path.replace(profile / "project-sync-applied.json")
+    except (OSError, ValueError, KeyError, TypeError, AttributeError) as exc:
+        raise RuntimeError(f"Cannot apply project sidebar sync: {pending_path}") from exc
+
+
+def ensure_profile_icon(name: str) -> None:
+    """Start the account icon helper from the published manager executable."""
+    if _current.key != "codex" or name != "account-2":
+        return
+    from profile_branding import worker_present
+    if worker_present(name):
+        return
+    if getattr(sys, "frozen", False):
+        published = Path(sys.executable).resolve().with_name("AI-Instance-Hub.exe")
+        executable = Path(sys.executable) if Path(sys.executable).name.lower() == "ai-instance-hub.exe" else published
+        args = ["--app=codex", "--decorate-profile", name, "--data-dir", str(PROJECT_DIR)]
+    else:
+        from app_paths import RESOURCE_DIR
+        executable = Path(pythonw_path())
+        args = [str(RESOURCE_DIR / "manager.pyw"), "--app=codex", "--decorate-profile", name,
+                "--data-dir", str(PROJECT_DIR)]
+    env = dict(os.environ)
+    env["PYINSTALLER_RESET_ENVIRONMENT"] = "1"
+    _spawn_desktop(executable, args, env)
 
 
 # --- Default-slot sign-in (snapshot model) --------------------------------- #
@@ -500,8 +663,12 @@ def default_slot_pids() -> list[int]:
     """Main processes of the desktop app running on the default slot: the
     packaged exe itself, with no --user-data-dir (so %APPDATA% state) and no
     --type= (Chromium children)."""
+    return _default_slot_pids_from_processes(_processes(_current.exe_name))
+
+
+def _default_slot_pids_from_processes(processes: list[tuple[int, str, str]]) -> list[int]:
     pids: list[int] = []
-    for pid, exe_path, cmd in _processes(_current.exe_name):
+    for pid, exe_path, cmd in processes:
         if not _is_packaged_exe(exe_path, _current):
             continue
         low = cmd.lower()
@@ -530,11 +697,11 @@ def launch_default_slot(exe: Path | None = None) -> None:
     exe = exe or find_app_exe()
     if exe is None:
         raise RuntimeError(f"{_current.display} not found. Is the desktop app installed?")
-    subprocess.Popen(
-        [str(exe)],
-        creationflags=DETACHED_FLAGS, close_fds=True,
-        stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-    )
+    validate_launch()
+    env = dict(os.environ)
+    for var, _sub in _current.env_overrides:
+        env.pop(var, None)
+    _spawn_desktop(exe, [], env)
 
 
 def _move_retry(src: Path, dst: Path, timeout: float = 15.0) -> None:

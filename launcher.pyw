@@ -1,6 +1,7 @@
 """Headless launcher for Claude/Codex profiles. No console window.
 
   launcher.pyw --app=<key> "<profile-name>"  -> open profile in that app
+  Add --action=close or --action=restart to operate on that profile only.
 
 The --app flag is added automatically by desktop shortcuts. If absent, Claude
 is assumed.
@@ -43,20 +44,26 @@ def main() -> int:
 
     engine.set_app(app, persist=False)
 
-    exe = engine.find_app_exe()
-    if exe is None:
-        _error(f"{app.display} not found.\nIs the desktop app installed?",
-               f"{app.display} Multi-Instance")
-        return 1
-
-    name = args[0] if args else ""
-    if not name:
-        _error("Usage: launcher.pyw --app=<claude|codex> <profile-name>",
+    action = "launch"
+    names = []
+    for arg in args:
+        if arg.startswith("--action="):
+            action = arg.split("=", 1)[1]
+        else:
+            names.append(arg)
+    name = names[0] if len(names) == 1 else ""
+    if not name or name in (".", "..") or not engine.valid_profile_name(name) or action not in ("launch", "close", "restart"):
+        _error("Usage: launcher.pyw --app=<claude|codex> <profile-name> [--action=launch|close|restart]",
                f"{app.display} Multi-Instance")
         return 2
 
     try:
-        engine.launch_profile(name, exe=exe)
+        if action == "close":
+            engine.close_profile(name, wait=15, strict=True)
+        elif action == "restart":
+            engine.restart_profile(name)
+        else:
+            engine.launch_profile(name)
     except (OSError, RuntimeError, ValueError) as e:
         _error(str(e), f"{app.display} Multi-Instance")
         return 1
